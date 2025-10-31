@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Disaster Evacuation Planner & Route Optimizer</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+</head>
+
+<body>
+  <div class="container">
+    <h1>Disaster Evacuation Planner</h1>
+ 
+
+    <div id="map"></div>
+    <!-- <p class="note">Click to add Disaster Zones → then “Set Safe Zone” → then “Generate Route”</p> -->
+
+    <div class="controls">
+      <button id="safezone-btn">Set Safe Zone</button>
+      <label>Vehicle Cap:</label>
+      <input type="number" id="vehicle-capacity" placeholder="Enter capacity">
+      <button id="generate-btn"> Generate</button>
+    </div>
+
+    <div id="results"></div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script>
+    const map = L.map('map').setView([19.07, 72.87], 13);
+    const ORS_API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjgxYmY5ZGYyOGI5ZDQwOWViMGY2YjhhMGVjYmZmOWY5IiwiaCI6Im11cm11cjY0In0="; // optional - paste key for road routing
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+    let zones = [], safeZone = null, settingSafeZone = false, routeLayer = null;
+
+    document.getElementById("safezone-btn").addEventListener("click", () => {
+      settingSafeZone = true;
+      document.querySelector(".note").innerText = "Click on map to set Safe Zone.";
+    });
+
+    map.on("click", (e) => {
+      const { lat, lng } = e.latlng;
+
+      if (settingSafeZone) {
+        safeZone = { lat, lng };
+        L.marker([lat, lng], {
+          icon: L.icon({
+            iconUrl: "https://maps.gstatic.com/mapfiles/ms2/micons/green-dot.png",
+            iconSize: [32, 32],
+          })
+        }).addTo(map).bindPopup(" Safe Zone").openPopup();
+        settingSafeZone = false;
+        document.querySelector(".note").innerText = "Safe zone set.";
+        return;
+      }
+
+      const id = zones.length + 1;
+      const popup = `
+        <div>
+          <b>Zone ${id}</b><br>
+          Population: <input id="pop-${id}" type="number" value="10"><br>
+          Severity (1-10): <input id="sev-${id}" type="number" value="5"><br>
+          <button onclick="saveZone(${lat}, ${lng}, ${id})">Save</button>
+        </div>
+      `;
+      L.marker([lat, lng]).addTo(map).bindPopup(popup).openPopup();
+    });
+
+    function saveZone(lat, lng, id) {
+      const pop = +document.getElementById(`pop-${id}`).value;
+      const sev = +document.getElementById(`sev-${id}`).value;
+      zones.push({ lat, lng, population: pop, severity: sev, name: `Zone ${id}` });
+      document.querySelector(".note").innerText = ` Zone ${id} saved.`;
+      map.closePopup();
+    }
+
+    async function drawORSRoute(points) {
+      if (!ORS_API_KEY) return drawSimpleRoute(points);
+      const coords = points.map(p => [p.lng, p.lat]);
+      const body = { coordinates: coords, format: "geojson" };
+      const res = await fetch("https://api.openrouteservice.org/v2/directions/driving-car/geojson", {
+        method: "POST",
+        headers: { "Authorization": ORS_API_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const json = await res.json();
+      const routeCoords = json.features[0].geometry.coordinates.map(c => [c[1], c[0]]);
+      if (routeLayer) map.removeLayer(routeLayer);
+      routeLayer = L.polyline(routeCoords, { color: "orange", weight: 5 }).addTo(map);
+      map.fitBounds(routeLayer.getBounds());
+      const km = (json.features[0].properties.summary.distance / 1000).toFixed(2);
+      return km;
+    }
+
+    function drawSimpleRoute(points) {
+      if (routeLayer) map.removeLayer(routeLayer);
+      routeLayer = L.polyline(points.map(p => [p.lat, p.lng]), {
+        color: "orange",
+        weight: 5
+      }).addTo(map);
+      map.fitBounds(routeLayer.getBounds());let htm
+      return 0;
+    }
+
+    document.getElementById("generate-btn").addEventListener("click", async () => {
+      const cap = +document.getElementById("vehicle-capacity").value;
+      if (!cap || !safeZone || zones.length === 0) {
+        document.querySelector(".note").innerText = " Add zones, safe zone & capacity first!";
+        return;
+      }
+
+      const payload = { vehicle_capacity: cap, zones, safe_zone: safeZone };
+      const res = await fetch("/calculate", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+
+      const routePoints = [...data.final_route, data.safe_zone];
+      const totalKm = await drawORSRoute(routePoints);
+
+      let html = `
+  <h2>Evacuation Results</h2>
+  <p><b>Total People Evacuated:</b> ${data.total_people}</p>
+  <p><b>Total Distance:</b> ~${data.total_distance_km.toFixed(2)} km</p>
+  <p><b>Estimated Evacuation Time:</b> ~${data.estimated_time_min.toFixed(1)} minutes</p>
+`;
+
+      document.getElementById("results").innerHTML = html;
+    });
+  </script>
+</body>
+</html>
