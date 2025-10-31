@@ -50,10 +50,6 @@ A vehicle with limited capacity must evacuate as many people as possible while m
 
 ### Frontend
 - **HTML5**
-- **CSS3 (Dark aesthetic theme)**
-- **JavaScript (Leaflet.js)** for map rendering and user interactions
 
----
 
-## Folder Structure
 
